@@ -1,8 +1,15 @@
-    global:
-      scrape_interval: 3s
+# Prometheus configuration — scrapes the Nginx metrics exporter.
+global:
+  scrape_interval: 3s          # how often to pull metrics
 
-    scrape_configs:
-      - job_name: 'nginx-exporter'
-        static_configs:
-          - targets: ['nginx_exporter:9113']
-    
+scrape_configs:
+  # Nginx metrics, via the nginx-prometheus-exporter sidecar.
+  # Target host = the exporter's container_name; port 9113 is its default.
+  - job_name: 'nginx-exporter'
+    static_configs:
+      - targets: ['nginx_exporter:9113']
+
+  # Prometheus scraping itself, good for sanity-checking.
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

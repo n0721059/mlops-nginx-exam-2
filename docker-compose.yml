@@ -1,4 +1,66 @@
 services:
+  # ---- Standard API, 3 replicas, load-balanced by Nginx ----
+  api-v1:
+    build:
+      context: .                      # repo root, so COPY can reach model/
+      dockerfile: src/api/v1/Dockerfile
+    image: exam-api-v1
+    # 3 instances. by `docker compose up` in Compose v2.
+    # NOTE: no container_name and no published ports -> replicas can't collide.
+    deploy:
+      replicas: 3
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ---- Debug API  returns the extra prediction_proba_dict ----
+  api-v2:
+    build:
+      context: .
+      dockerfile: src/api/v2/Dockerfile
+    image: exam-api-v2
+    container_name: api-v2
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ---- Nginx gateway ----
+  nginx:
+    build:
+      context: ./deployments/nginx    # local context: conf, certs, .htpasswd
+      dockerfile: Dockerfile
+    image: exam-nginx
+    container_name: nginx_gateway
+    ports:
+      - "80:80"      # HTTP  -> 301 redirects to HTTPS
+      - "443:443"    # HTTPS -> the real entry point
+    # Wait for BOTH APIs to be healthy before starting -> no 502 race.
+    depends_on:
+      api-v1:
+        condition: service_healthy
+      api-v2:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---- Nginx metrics exporter  ----
+  nginx_exporter:
+    image: nginx/nginx-prometheus-exporter:1.1.0
+    container_name: nginx_exporter          # name must match prometheus.yml ta
+    command:
+      - "--nginx.scrape-uri=http://nginx:8080/stub_status"
+    depends_on:
+      - nginx
+    restart: unless-stopped
+
+  # ---- Prometheus  ----
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus_server
@@ -8,8 +70,9 @@ services:
       - ./deployments/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     depends_on:
-      - nginx
+      - nginx_exporter
 
+  # ---- Grafana  ----
   grafana:
     image: grafana/grafana:latest
     container_name: grafana_dashboard
